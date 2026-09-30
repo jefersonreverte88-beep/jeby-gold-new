@@ -12,20 +12,22 @@ if not API_KEY:
 
 genai.configure(api_key=API_KEY)
 
-SYSTEM_INSTRUCTION = """
-Você é Jeby, uma assistente sutil e profissional especializada em transações e informações sobre a compra e venda de ouro, sempre mantendo um tom discreto e cortês.
+# Dados de pagamento: mantidos em variáveis de ambiente, não no código público.
+PIX_KEY = os.getenv("JEBY_PIX_KEY", "")
+PIX_HOLDER = os.getenv("JEBY_PIX_HOLDER", "Jeferson Lopes Reverte")
+
+SYSTEM_INSTRUCTION = f"""
+Você é Jeby, uma assistente profissional, discreta e cordial da JEBY Gold.
 
 INFORMAÇÕES SOBRE JEBY GOLD:
-- Catálogo: Barras de 10g, 100g, 1kg, moedas, joias em ouro 18K e 24K
-- Faturamento: R$ 148.520,00 (meta: R$ 250.000,00)
-- Clubes: Acumulador (2g/mês), Safira (5g/mês), Imperial (20g/mês)
-- PIX: pix@gebouro.com.br com 3% de desconto
-- Pagamento: PIX instantâneo, cartão até 12x, WhatsApp
-- Conta Brasileira: Inter - Agência 0001 - Conta 55707954-3
-- Conta Global: Community Federal Savings Bank - Account 8893262719
-- Nome do projeto: JEBY Gold New — Gemini
+- Catálogo: barras de 10g, 100g, 1kg, moedas e joias em ouro 18K e 24K.
+- Clubes: Acumulador (2g/mês), Safira (5g/mês), Imperial (20g/mês).
+- Pagamento: PIX instantâneo, cartão até 12x e WhatsApp.
+- Titular de recebimento: {PIX_HOLDER}.
 
-Sempre seja prestativo, educado e discreto nas respostas sobre investimento em ouro.
+Quando o cliente perguntar como pagar, informe o titular e o PIX somente se o PIX estiver configurado no servidor.
+Nunca invente preços, cotações, descontos, dados bancários ou status de pagamento.
+Não dê garantia de lucro nem aconselhamento financeiro personalizado.
 """
 
 model = genai.GenerativeModel(
@@ -45,12 +47,26 @@ sessions = {}
 def health():
     return jsonify({"status": "ok"}), 200
 
+@app.route("/api/payment-info", methods=["GET"])
+def payment_info():
+    if not PIX_KEY:
+        return jsonify({
+            "configured": False,
+            "message": "PIX ainda não configurado no servidor."
+        }), 503
+
+    return jsonify({
+        "configured": True,
+        "pix": PIX_KEY,
+        "holder": PIX_HOLDER
+    }), 200
+
 @app.route("/jeby/chat", methods=["POST"])
 def jeby_chat():
     try:
         data = request.get_json(force=True, silent=True) or {}
-        user_id = data.get("user_id", "default")
-        message = data.get("message", "").strip()
+        user_id = str(data.get("user_id", "default"))[:100]
+        message = str(data.get("message", "")).strip()
 
         if not message:
             return jsonify({"success": False, "error": "Mensagem vazia"}), 400
@@ -58,8 +74,7 @@ def jeby_chat():
         if user_id not in sessions:
             sessions[user_id] = model.start_chat()
 
-        chat = sessions[user_id]
-        response = chat.send_message(message)
+        response = sessions[user_id].send_message(message)
 
         return jsonify({
             "success": True,
@@ -67,21 +82,22 @@ def jeby_chat():
             "message": response.text
         }), 200
 
-    except Exception as e:
+    except Exception as error:
+        app.logger.exception("Erro no chat da Jeby")
         return jsonify({
             "success": False,
-            "error": str(e)
+            "error": "Não foi possível processar a mensagem agora."
         }), 500
 
 @app.route("/jeby/clear", methods=["POST"])
 def clear_chat():
     try:
         data = request.get_json(force=True, silent=True) or {}
-        user_id = data.get("user_id", "default")
+        user_id = str(data.get("user_id", "default"))[:100]
         sessions.pop(user_id, None)
         return jsonify({"success": True}), 200
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)}), 500
+    except Exception:
+        return jsonify({"success": False, "error": "Não foi possível limpar a conversa."}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000, debug=False)
